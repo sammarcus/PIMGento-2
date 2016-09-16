@@ -8,7 +8,7 @@ use \Pimgento\Import\Helper\Config as helperConfig;
 use \Magento\Framework\Event\ManagerInterface;
 use \Magento\Framework\App\Cache\TypeListInterface;
 use \Pimgento\Attribute\Helper\Type as helperType;
-use \Magento\Eav\Setup\EavSetup;
+use \Pimgento\Attribute\Setup\AttributeSetup;
 use \Magento\Framework\Module\Manager as moduleManager;
 use \Magento\Framework\App\Config\ScopeConfigInterface as scopeConfig;
 use \Zend_Db_Expr as Expr;
@@ -16,6 +16,11 @@ use \Exception;
 
 class Import extends Factory
 {
+    /**
+     * Product Entity Type Id
+     * @var int
+     */
+    protected $_entityTypeId;
 
     /**
      * @var Entities
@@ -44,7 +49,7 @@ class Import extends Factory
      * @param \Magento\Framework\App\Config\ScopeConfigInterface $scopeConfig
      * @param \Magento\Framework\Event\ManagerInterface $eventManager
      * @param \Pimgento\Attribute\Helper\Type $helperType
-     * @param \Magento\Eav\Setup\EavSetup $eavSetup
+     * @param \Pimgento\Attribute\Setup\AttributeSetup $attributeSetup
      * @param \Magento\Framework\App\Cache\TypeListInterface $cacheTypeList
      * @param array $data
      */
@@ -55,16 +60,31 @@ class Import extends Factory
         scopeConfig $scopeConfig,
         ManagerInterface $eventManager,
         helperType $helperType,
-        EavSetup $eavSetup,
+        AttributeSetup $attributeSetup,
         TypeListInterface $cacheTypeList,
         array $data = []
     )
     {
         parent::__construct($helperConfig, $eventManager, $moduleManager, $scopeConfig, $data);
         $this->_helperType = $helperType;
-        $this->_eavSetup = $eavSetup;
+        $this->_eavSetup = $attributeSetup;
         $this->_entities = $entities;
         $this->_cacheTypeList = $cacheTypeList;
+    }
+
+    /**
+     * Get the product entity type id
+     *
+     * @return int
+     */
+    protected function getEntityTypeId()
+    {
+        if (is_null($this->_entityTypeId)) {
+            //@todo get it from the database
+            $this->_entityTypeId = 4;
+        }
+
+        return $this->_entityTypeId;
     }
 
     /**
@@ -72,9 +92,15 @@ class Import extends Factory
      */
     public function createTable()
     {
-        $file = $this->getUploadDir() . '/' . $this->getFile();
+        $file = $this->getFileFullPath();
 
-        $this->_entities->createTmpTableFromFile($file, $this->getCode(), array('type', 'code', 'families'));
+        if (!is_file($file)) {
+            $this->setContinue(false);
+            $this->setStatus(false);
+            $this->setMessage($this->getFileNotFoundErrorMessage());
+        } else {
+            $this->_entities->createTmpTableFromFile($file, $this->getCode(), array('type', 'code', 'families'));
+        }
     }
 
     /**
@@ -82,7 +108,7 @@ class Import extends Factory
      */
     public function insertData()
     {
-        $file = $this->getUploadDir() . '/' . $this->getFile();
+        $file = $this->getFileFullPath();
 
         $count = $this->_entities->insertDataFromFile($file, $this->getCode());
 
@@ -107,7 +133,7 @@ class Import extends Factory
                     'entity_id'  => 'attribute_id',
                 )
             )
-            ->where('entity_type_id = ?', 4);
+            ->where('entity_type_id = ?', $this->getEntityTypeId());
 
         $connection->query(
             $connection->insertFromSelect(
@@ -126,15 +152,18 @@ class Import extends Factory
         $connection = $this->_entities->getResource()->getConnection();
         $tmpTable = $this->_entities->getTableName($this->getCode());
 
-        $connection->addColumn($tmpTable, 'backend_type',   'VARCHAR(255) NULL');
-        $connection->addColumn($tmpTable, 'frontend_input', 'VARCHAR(255) NULL');
-        $connection->addColumn($tmpTable, 'backend_model',  'VARCHAR(255) NULL');
-        $connection->addColumn($tmpTable, 'source_model',   'VARCHAR(255) NULL');
+        $columns = $this->_helperType->getSpecificColumns();
+        foreach ($columns as $name => $type) {
+            $connection->addColumn($tmpTable, $name, $type);
+        }
 
         $select = $connection->select()
             ->from(
                 $tmpTable,
-                array('_entity_id', 'type', 'backend_type', 'frontend_input', 'backend_model', 'source_model')
+                array_merge(
+                    array('_entity_id', 'type'),
+                    array_keys($columns)
+                )
             );
 
         $data = $connection->fetchAssoc($select);
@@ -142,14 +171,7 @@ class Import extends Factory
         foreach ($data as $id => $attribute) {
             $type = $this->_helperType->getType($attribute['type']);
 
-            $values = array(
-                'backend_type'   => $type['backend_type'],
-                'frontend_input' => $type['frontend_input'],
-                'backend_model'  => $type['backend_model'],
-                'source_model'   => $type['source_model'],
-            );
-
-            $connection->update($tmpTable, $values, array('_entity_id = ?' => $id));
+            $connection->update($tmpTable, $type, array('_entity_id = ?' => $id));
         }
     }
 
@@ -198,6 +220,7 @@ class Import extends Factory
      */
     public function addAttributes()
     {
+        $columns = array_keys($this->_helperType->getSpecificColumns());
         $connection = $this->_entities->getResource()->getConnection();
         $tmpTable = $this->_entities->getTableName($this->getCode());
 
@@ -209,7 +232,7 @@ class Import extends Factory
             /* Insert base data (ignore if already exists) */
             $values = array(
                 'attribute_id'   => $row['_entity_id'],
-                'entity_type_id' => 4,
+                'entity_type_id' => $this->getEntityTypeId(),
                 'attribute_code' => $row['code'],
             );
             $connection->insertOnDuplicate(
@@ -244,7 +267,7 @@ class Import extends Factory
             }
 
             $data = array(
-                'entity_type_id' => 4,
+                'entity_type_id' => $this->getEntityTypeId(),
                 'attribute_code' => $row['code'],
                 'frontend_label' => $frontendLabel,
                 'is_global'      => $global,
@@ -252,51 +275,56 @@ class Import extends Factory
 
             if ($row['_is_new'] == 1) {
                 $data = array(
-                    'entity_type_id' => 4,
-                    'attribute_code' => $row['code'],
-                    'backend_model' => $row['backend_model'],
-                    'backend_type' => $row['backend_type'],
-                    'backend_table' => null,
-                    'frontend_model' => null,
-                    'frontend_input' => $row['frontend_input'],
-                    'frontend_label' => $frontendLabel,
-                    'frontend_class' => null,
-                    'source_model' => $row['source_model'],
-                    'is_required' => 0,
-                    'is_user_defined' => 1,
-                    'default_value' => null,
-                    'is_unique' => $row['unique'],
-                    'note' => null,
-                    'is_global' => $global,
-                    'is_visible' => 1,
-                    'is_system' => 1,
-                    'input_filter' => null,
-                    'multiline_count' => 0,
-                    'validate_rules' => null,
-                    'data_model' => null,
-                    'sort_order' => 0,
-                    'is_used_in_grid' => 0,
-                    'is_visible_in_grid' => 0,
-                    'is_filterable_in_grid' => 0,
-                    'is_searchable_in_grid' => 0,
-                    'frontend_input_renderer' => null,
-                    'is_searchable' => 0,
-                    'is_filterable' => 0,
-                    'is_comparable' => 0,
-                    'is_visible_on_front' => 0,
-                    'is_wysiwyg_enabled' => 0,
-                    'is_html_allowed_on_front' => 0,
+                    'entity_type_id'                => $this->getEntityTypeId(),
+                    'attribute_code'                => $row['code'],
+                    'backend_table'                 => null,
+                    'frontend_label'                => $frontendLabel,
+                    'frontend_class'                => null,
+                    'is_required'                   => 0,
+                    'is_user_defined'               => 1,
+                    'default_value'                 => null,
+                    'is_unique'                     => $row['unique'],
+                    'note'                          => null,
+                    'is_global'                     => $global,
+                    'is_visible'                    => 1,
+                    'is_system'                     => 1,
+                    'input_filter'                  => null,
+                    'multiline_count'               => 0,
+                    'validate_rules'                => null,
+                    'data_model'                    => null,
+                    'sort_order'                    => 0,
+                    'is_used_in_grid'               => 0,
+                    'is_visible_in_grid'            => 0,
+                    'is_filterable_in_grid'         => 0,
+                    'is_searchable_in_grid'         => 0,
+                    'frontend_input_renderer'       => null,
+                    'is_searchable'                 => 0,
+                    'is_filterable'                 => 0,
+                    'is_comparable'                 => 0,
+                    'is_visible_on_front'           => 0,
+                    'is_wysiwyg_enabled'            => 0,
+                    'is_html_allowed_on_front'      => 0,
                     'is_visible_in_advanced_search' => 0,
-                    'is_filterable_in_search' => 0,
-                    'used_in_product_listing' => 0,
-                    'used_for_sort_by' => 0,
-                    'apply_to' => null,
-                    'position' => 0,
-                    'is_used_for_promo_rules' => 0,
+                    'is_filterable_in_search'       => 0,
+                    'used_in_product_listing'       => 0,
+                    'used_for_sort_by'              => 0,
+                    'apply_to'                      => null,
+                    'position'                      => 0,
+                    'is_used_for_promo_rules'       => 0,
                 );
+
+                foreach ($columns as $column) {
+                    $data[$column] = $row[$column];
+                }
             }
 
-            $this->_eavSetup->updateAttribute(4, $row['_entity_id'], $data, null, 0);
+            $this->_eavSetup->updateAttribute(
+                $this->getEntityTypeId(),
+                $row['_entity_id'],
+                $data,
+                null,
+                0
+            );
 
             /* Add Attribute to group and family */
             if ($row['_attribute_set_id'] && $row['group']) {
@@ -304,8 +332,17 @@ class Import extends Factory
 
                 foreach ($attributeSetIds as $attributeSetId) {
                     if (is_numeric($attributeSetId)) {
-                        $this->_eavSetup->addAttributeGroup(4, $attributeSetId, ucfirst($row['group']));
-                        $this->_eavSetup->addAttributeToSet(4, $attributeSetId, ucfirst($row['group']), $row['_entity_id']);
+                        $this->_eavSetup->addAttributeGroup(
+                            $this->getEntityTypeId(),
+                            $attributeSetId,
+                            ucfirst($row['group'])
+                        );
+                        $this->_eavSetup->addAttributeToSet(
+                            $this->getEntityTypeId(),
+                            $attributeSetId,
+                            ucfirst($row['group']),
+                            $row['_entity_id']
+                        );
                     }
                 }
             }
@@ -316,14 +353,31 @@ class Import extends Factory
             foreach ($stores as $lang => $data) {
                 if (isset($row['label-' . $lang])) {
                     foreach ($data as $store) {
-                        $values = array(
-                            'attribute_id' => $row['_entity_id'],
-                            'store_id' => $store['store_id'],
-                            'value' => $row['label-' . $lang]
+
+                        $exists = $connection->fetchOne(
+                            $connection->select()
+                                ->from($connection->getTableName('eav_attribute_label'))
+                                ->where('attribute_id = ?', $row['_entity_id'])
+                                ->where('store_id = ?', $store['store_id'])
                         );
-                        $connection->insertOnDuplicate(
-                            $connection->getTableName('eav_attribute_label'), $values, array_keys($values)
-                        );
+
+                        if ($exists) {
+                            $values = array(
+                                'value' => $row['label-' . $lang]
+                            );
+                            $where = array(
+                                'attribute_id = ?' => $row['_entity_id'],
+                                'store_id = ?' => $store['store_id']
+                            );
+                            $connection->update($connection->getTableName('eav_attribute_label'), $values, $where);
+                        } else {
+                            $values = array(
+                                'attribute_id' => $row['_entity_id'],
+                                'store_id' => $store['store_id'],
+                                'value' => $row['label-' . $lang]
+                            );
+                            $connection->insert($connection->getTableName('eav_attribute_label'), $values);
+                        }
                     }
                 }
             }

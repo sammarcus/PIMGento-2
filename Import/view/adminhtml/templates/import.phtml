@@ -5,7 +5,9 @@
         <div class="pimgento-types">
             <?php $collection = $block->getCollection() ?>
             <?php foreach ($collection as $import): ?>
-                <div class="import-type" onclick="Pimgento.type('<?php echo $import->getCode() ?>', this)"><?php echo $import->getName() ?></div>
+                <?php if ($block->isAllowed($import->getCode())): ?>
+                    <div class="import-type" onclick="Pimgento.type('<?php echo $import->getCode() ?>', this)"><?php echo $import->getName() ?></div>
+                <?php endif; ?>
             <?php endforeach; ?>
         </div>
     </div>
@@ -16,7 +18,9 @@
                 <input type="file"
                        name="file"
                        data-url="<?php echo $uploadUrl; ?>"
-                       multiple="multiple" />
+                       multiple="multiple"
+                       style="border: none;"
+                />
                 <p class="image-placeholder-text"><?php echo $filePlaceholderText; ?></p>
             </div>
             <script id="<?php echo $htmlId; ?>-template"

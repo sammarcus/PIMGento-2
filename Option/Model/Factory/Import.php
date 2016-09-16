@@ -54,9 +54,16 @@ class Import extends Factory
      */
     public function createTable()
     {
-        $file = $this->getUploadDir() . '/' . $this->getFile();
+        $file = $this->getFileFullPath();
 
-        $this->_entities->createTmpTableFromFile($file, $this->getCode(), array('code', 'attribute'));
+        if (!is_file($file)) {
+            $this->setContinue(false);
+            $this->setStatus(false);
+            $this->setMessage($this->getFileNotFoundErrorMessage());
+;
+        } else {
+            $this->_entities->createTmpTableFromFile($file, $this->getCode(), array('code', 'attribute'));
+        }
     }
 
     /**
@@ -64,7 +71,7 @@ class Import extends Factory
      */
     public function insertData()
     {
-        $file = $this->getUploadDir() . '/' . $this->getFile();
+        $file = $this->getFileFullPath();
 
         $count = $this->_entities->insertDataFromFile($file, $this->getCode());
 

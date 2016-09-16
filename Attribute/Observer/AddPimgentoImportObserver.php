@@ -24,6 +24,7 @@ class AddPimgentoImportObserver implements ObserverInterface
                 'name'       => __('Attributes'),
                 'class'      => '\Pimgento\Attribute\Model\Factory\Import',
                 'sort_order' => 30,
+                'file_is_required' => true,
                 'steps' => array(
                     array(
                         'comment' => __('Create temporary table'),
@@ -42,7 +43,7 @@ class AddPimgentoImportObserver implements ObserverInterface
                         'method'  => 'matchType',
                     ),
                     array(
-                        'comment' => 'Match family',
+                        'comment' => __('Match family'),
                         'method'  => 'matchFamily',
                     ),
                     array(
@@ -50,7 +51,7 @@ class AddPimgentoImportObserver implements ObserverInterface
                         'method'  => 'addAttributes',
                     ),
                     array(
-                        'comment' => __('Drop  temporary table'),
+                        'comment' => __('Drop temporary table'),
                         'method'  => 'dropTable',
                     ),
                     array(

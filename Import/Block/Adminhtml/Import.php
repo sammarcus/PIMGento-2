@@ -7,6 +7,7 @@ use \Magento\Backend\Model\UrlFactory;
 use \Magento\Framework\File\Size;
 use \Magento\Backend\Block\Template\Context;
 use \Pimgento\Import\Model\Import as ImportModel;
+use \Magento\Framework\AuthorizationInterface;
 
 class Import extends Template
 {
@@ -63,6 +64,17 @@ class Import extends Template
     public function getCollection()
     {
         return $this->_import->getCollection();
+    }
+
+    /**
+     * Check import is allowed
+     *
+     * @param string $code
+     * @return bool
+     */
+    public function isAllowed($code)
+    {
+        return $this->_authorization->isAllowed('Pimgento_Import::pimgento_import_' . $code);
     }
 
     /**

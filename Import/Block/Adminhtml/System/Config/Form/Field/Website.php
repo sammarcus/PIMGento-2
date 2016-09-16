@@ -13,7 +13,6 @@ class Website extends \Magento\Config\Block\System\Config\Form\Field\FieldArray\
     /**
      * @param \Magento\Backend\Block\Template\Context $context
      * @param \Magento\Framework\Data\Form\Element\Factory $elementFactory
-     * @param \Pimgento\Attribute\Helper\Type $helperType
      * @param array $data
      */
     public function __construct(

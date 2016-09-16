@@ -22,7 +22,8 @@ With PIMGento, you can import :
 ## Requirements
 
 * Akeneo 1.3, 1.4 and 1.5
-* Magento >= 2.0 CE & EE
+* Akeneo Bundle [EnhancedConnectorBundle](https://github.com/akeneo-labs/EnhancedConnectorBundle/)
+* Magento >= 2.0 CE & EE (Magento EE 2.1 without Staging module)
 * Set local_infile mysql variable to TRUE
 * Database encoding must be UTF-8
 * Add "driver_options" key to Magento default connection configuration (app/etc/env.php)
@@ -46,18 +47,13 @@ With PIMGento, you can import :
   ),
 ```
 
-With Akeneo 1.3 or 1.4, you need to install this Bundle (https://github.com/akeneo-labs/EnhancedConnectorBundle/) in order to generate appropriate CSV files for Magento.
+You need to install this Akeneo Bundle (https://github.com/akeneo-labs/EnhancedConnectorBundle/)
+in order to generate appropriate CSV files for Magento.
 
 ### Installation ###
 
 Install module by Composer as follows:
 
-Configure Composer to search for this repository
-
-```shell
-composer config repositories.agencednd/module-pimgento vcs https://github.com/Agence-DnD/PIMGento-2
-```
-Require this repository in Composer
 ```shell
 composer require agencednd/module-pimgento
 ```
@@ -100,13 +96,19 @@ php bin/magento cache:flush
 * Launch import from admin panel in "System > Pimgento > Import"
 * After category import, set the "Root Category" for store in "Stores > Settings > All Stores"
 
+## Command line
+
+Launch import with command line:
+
+```shell
+php bin/magento pimgento:import --code=product --file=product.csv
+```
+
 ## Roadmap
 
-* Command line tool (bin/magento) options for imports
 * Image files import
-* Link related products (related, cross-sells, up-sells)
-* French translation
 * Pim code exclusion
+* Compatibility with Magento EE 2.1 + Staging
 
 ## About us
 

@@ -3,7 +3,8 @@
 namespace Pimgento\Import\Model;
 
 use \Magento\Framework\DataObject;
-use \Pimgento\Import\Model\Import\Collection;
+use \Pimgento\Import\Model\Import\CollectionFactory;
+use \Exception;
 
 class Import extends DataObject
 {
@@ -14,15 +15,15 @@ class Import extends DataObject
     protected $_importCollection;
 
     /**
-     * @param \Pimgento\Import\Model\Import\Collection $importCollection
+     * @param CollectionFactory $importCollectionFactory
      * @param array $data
      */
     public function __construct(
-        Collection $importCollection,
+        CollectionFactory $importCollectionFactory,
         array $data = []
-    )
-    {
-        $this->_importCollection = $importCollection;
+    ) {
+        $this->_importCollection = $importCollectionFactory->create();
+
         parent::__construct($data);
     }
 
@@ -31,10 +32,21 @@ class Import extends DataObject
      *
      * @param string $code
      * @return \Pimgento\Import\Model\Factory
+     * @throws Exception
      */
     public function load($code)
     {
-        return $this->_importCollection->addCodeFilter($code)->loadImport()->getFirstItem();
+        if (!$code) {
+            throw new Exception(__('Import code is empty'));
+        }
+
+        $import = $this->_importCollection->addCodeFilter($code)->loadImport()->getFirstItem();
+
+        if (!$import->hasData()) {
+            throw new Exception(__('Import %1 not found', $code));
+        }
+
+        return $import;
     }
 
     /**

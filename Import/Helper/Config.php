@@ -48,7 +48,9 @@ class Config extends AbstractHelper
         /** @var $varDirectory \Magento\Framework\Filesystem\Directory\Read $mediaDirectory */
         $varDirectory = $this->_fileSystem->getDirectoryRead(DirectoryList::VAR_DIR);
 
-        return $varDirectory->getAbsolutePath('import/pimgento');
+        return $varDirectory->getAbsolutePath(
+            $this->scopeConfig->getValue('pimgento/general/import_directory')
+        );
     }
 
     /**
@@ -148,6 +150,16 @@ class Config extends AbstractHelper
         }
 
         return $data;
+    }
+
+    /**
+     * Retrieve default website id
+     *
+     * @return int
+     */
+    public function getDefaultWebsiteId()
+    {
+        return $this->_storeManager->getStore()->getWebsiteId();
     }
 
 }

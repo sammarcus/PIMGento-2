@@ -24,6 +24,7 @@ class AddPimgentoImportObserver implements ObserverInterface
                 'name'       => __('Categories'),
                 'class'      => '\Pimgento\Category\Model\Factory\Import',
                 'sort_order' => 10,
+                'file_is_required' => true,
                 'steps' => array(
                     array(
                         'comment' => __('Create temporary table'),
@@ -66,7 +67,7 @@ class AddPimgentoImportObserver implements ObserverInterface
                         'method'  => 'setUrlRewrite',
                     ),
                     array(
-                        'comment' => __('Drop  temporary table'),
+                        'comment' => __('Drop temporary table'),
                         'method'  => 'dropTable',
                     ),
                     array(

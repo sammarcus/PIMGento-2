@@ -5,11 +5,14 @@ namespace Pimgento\Product\Model\Factory;
 use \Pimgento\Import\Model\Factory;
 use \Pimgento\Entities\Model\Entities;
 use \Pimgento\Import\Helper\Config as helperConfig;
+use \Pimgento\Product\Helper\Config as productHelper;
+use \Magento\Catalog\Model\Product\Link as Link;
 use \Magento\Framework\Event\ManagerInterface;
 use \Magento\Framework\App\Cache\TypeListInterface;
 use \Magento\Eav\Model\Entity\Attribute\SetFactory;
 use \Magento\Framework\Module\Manager as moduleManager;
 use \Magento\Framework\App\Config\ScopeConfigInterface as scopeConfig;
+use \Magento\Framework\DB\Adapter\AdapterInterface;
 use \Zend_Db_Expr as Expr;
 use \Exception;
 
@@ -32,8 +35,20 @@ class Import extends Factory
     protected $_cacheTypeList;
 
     /**
+     * @var \Pimgento\Product\Helper\Config
+     */
+    protected $_productHelper;
+
+    /**
+     * list of allowed type_id that can be imported
+     * @var string[]
+     */
+    protected $_allowedTypeId = ['simple', 'virtual'];
+
+    /**
      * @param \Pimgento\Entities\Model\Entities $entities
      * @param \Pimgento\Import\Helper\Config $helperConfig
+     * @param \Pimgento\Product\Helper\Config $productHelper
      * @param \Magento\Framework\Module\Manager $moduleManager
      * @param \Magento\Framework\App\Config\ScopeConfigInterface $scopeConfig
      * @param \Magento\Framework\Event\ManagerInterface $eventManager
@@ -44,6 +59,7 @@ class Import extends Factory
     public function __construct(
         Entities $entities,
         helperConfig $helperConfig,
+        productHelper $productHelper,
         moduleManager $moduleManager,
         scopeConfig $scopeConfig,
         ManagerInterface $eventManager,
@@ -56,6 +72,7 @@ class Import extends Factory
         $this->_entities = $entities;
         $this->_cacheTypeList = $cacheTypeList;
         $this->_attributeSetFactory = $attributeSetFactory;
+        $this->_productHelper = $productHelper;
     }
 
     /**
@@ -63,9 +80,16 @@ class Import extends Factory
      */
     public function createTable()
     {
-        $file = $this->getUploadDir() . '/' . $this->getFile();
+        $file = $this->getFileFullPath();
 
-        $this->_entities->createTmpTableFromFile($file, $this->getCode(), array('sku'));
+        if (!is_file($file)) {
+            $this->setContinue(false);
+            $this->setStatus(false);
+            $this->setMessage($this->getFileNotFoundErrorMessage());
+
+        } else {
+            $this->_entities->createTmpTableFromFile($file, $this->getCode(), array('sku'));
+        }
     }
 
     /**
@@ -73,7 +97,7 @@ class Import extends Factory
      */
     public function insertData()
     {
-        $file = $this->getUploadDir() . '/' . $this->getFile();
+        $file = $this->getFileFullPath();
 
         $count = $this->_entities->insertDataFromFile($file, $this->getCode());
 
@@ -110,18 +134,34 @@ class Import extends Factory
             $connection->update($tmpTable, array('_visibility' => new Expr('IF(`groups` <> "", 1, 4)')));
         }
 
-        $matches = $this->_scopeConfig->getValue('pimgento/product/attribute_mapping');
+        if ($connection->tableColumnExists($tmpTable, 'type_id')) {
+            $types = $connection->quote($this->_allowedTypeId);
+            $connection->update(
+                $tmpTable,
+                array(
+                    '_type_id' => new Expr("IF(`type_id` IN ($types), `type_id`, 'simple')")
+                )
+            );
+        }
 
-        $stores = $this->_helperConfig->getStores('lang');
+        $matches = $this->_scopeConfig->getValue('pimgento/product/attribute_mapping');
 
         if ($matches) {
             $matches = unserialize($matches);
             if (is_array($matches)) {
+                $stores = array_merge(
+                    $this->_helperConfig->getStores(array('lang')), // en_US
+                    $this->_helperConfig->getStores(array('lang', 'channel_code')), // en_US-channel
+                    $this->_helperConfig->getStores(array('channel_code')), // channel
+                    $this->_helperConfig->getStores(array('currency')), // USD
+                    $this->_helperConfig->getStores(array('channel_code', 'currency')), // channel-USD
+                    $this->_helperConfig->getStores(array('lang', 'channel_code', 'currency')) // en_US-channel-USD
+                );
                 foreach ($matches as $match) {
                     $pimAttr = $match['pim_attribute'];
                     $magentoAttr = $match['magento_attribute'];
                     $this->_entities->copyColumn($tmpTable, $pimAttr, $magentoAttr);
-                    
+
                     foreach ($stores as $local => $affected) {
                         $this->_entities->copyColumn($tmpTable, $pimAttr . '-' . $local, $magentoAttr . '-' . $local);
                     }
@@ -174,27 +214,51 @@ class Import extends Factory
             $additional = $this->_scopeConfig->getValue('pimgento/product/configurable_attributes');
 
             if ($additional) {
+                $additional = unserialize($additional);
+                if (is_array($additional)) {
 
-                $attributes = explode(',', $additional);
+                    $stores = array_merge(
+                        $this->_helperConfig->getStores(array('lang')), // en_US
+                        $this->_helperConfig->getStores(array('lang', 'channel_code')), // en_US-channel
+                        $this->_helperConfig->getStores(array('channel_code')), // channel
+                        $this->_helperConfig->getStores(array('currency')), // USD
+                        $this->_helperConfig->getStores(array('channel_code', 'currency')), // channel-USD
+                        $this->_helperConfig->getStores(array('lang', 'channel_code', 'currency')) // en_US-channel-USD
+                    );
 
-                $stores = $this->_helperConfig->getStores('lang');
+                    foreach ($additional as $attribute) {
+                        $attr  = $attribute['attribute'];
+                        $value = $attribute['value'];
 
-                foreach ($attributes as $attribute) {
-                    foreach ($stores as $local => $affected) {
-                        $attributes[] = trim($attribute) . '-' . $local;
-                    }
-                }
+                        $columns = array(trim($attr));
+                        foreach ($stores as $local => $affected) {
+                            $columns[] = trim($attr) . '-' . $local;
+                        }
 
-                foreach ($attributes as $attribute) {
+                        foreach ($columns as $column) {
 
-                    if ($connection->tableColumnExists($tmpTable, $attribute)) {
-                        if ($connection->tableColumnExists($connection->getTableName('pimgento_variant'), $attribute)) {
-                            $data[$attribute] = 'v.' . $attribute;
-                        } else {
-                            $data[$attribute] = 'e.' . $attribute;
+                            if ($column == 'enabled') {
+                                if ($connection->tableColumnExists($tmpTable, 'enabled')) {
+                                    $column = '_status';
+                                    if ($value == "0") {
+                                        $value = "2";
+                                    }
+                                }
+                            }
+
+                            if ($connection->tableColumnExists($tmpTable, $column)) {
+                                if (!strlen($value)) {
+                                    if ($connection->tableColumnExists($connection->getTableName('pimgento_variant'), $column)) {
+                                        $data[$column] = 'v.' . $column;
+                                    } else {
+                                        $data[$column] = 'e.' . $column;
+                                    }
+                                } else {
+                                    $data[$column] = new Expr('"' . $value . '"');
+                                }
+                            }
                         }
                     }
-
                 }
 
             }
@@ -286,6 +350,10 @@ class Import extends Factory
                 continue;
             }
 
+            if (preg_match('/-unit/', $column)) {
+                continue;
+            }
+
             $columnPrefix = explode('-', $column);
             $columnPrefix = reset($columnPrefix);
 
@@ -303,7 +371,10 @@ class Import extends Factory
                         array(
                             'c' => $connection->getTableName('pimgento_entities')
                         ),
-                        'FIND_IN_SET(`c`.`code`, CONCAT("' . $columnPrefix . '", "_", `p`.`' . $column . '`))
+                        'FIND_IN_SET(
+                            REPLACE(`c`.`code`, "' . $columnPrefix . '_", ""),
+                            `p`.`' . $column . '`
+                        )
                         AND `c`.`import` = "option"',
                         array(
                             $column => new Expr('GROUP_CONCAT(`c`.`entity_id` SEPARATOR ",")')
@@ -359,8 +430,8 @@ class Import extends Factory
 
         $stores = array_merge(
             $this->_helperConfig->getStores(array('lang')), // en_US
+            $this->_helperConfig->getStores(array('lang', 'channel_code')), // en_US-channel
             $this->_helperConfig->getStores(array('channel_code')), // channel
-            $this->_helperConfig->getStores(array('channel_code', 'lang')), // channel-en_US
             $this->_helperConfig->getStores(array('currency')), // USD
             $this->_helperConfig->getStores(array('channel_code', 'currency')), // channel-USD
             $this->_helperConfig->getStores(array('lang', 'channel_code', 'currency')) // en_US-channel-USD
@@ -398,8 +469,19 @@ class Import extends Factory
             $values[0]['status'] = '_status';
         }
 
+        $taxClasses = $this->_productHelper->getProductTaxClasses();
+        if (count($taxClasses)) {
+            foreach ($taxClasses as $storeId => $taxClassId) {
+                $values[$storeId]['tax_class_id'] = new Expr($taxClassId);
+            }
+        }
+
         foreach ($columns as $column) {
             if (in_array($column, $except)) {
+                continue;
+            }
+
+            if (preg_match('/-unit/', $column)) {
                 continue;
             }
 
@@ -645,35 +727,28 @@ class Import extends Factory
         $connection = $this->_entities->getResource()->getConnection();
         $tmpTable = $this->_entities->getTableName($this->getCode());
 
-        $websites = $this->_helperConfig->getStores('website_id');
+        $websiteId = $this->_helperConfig->getDefaultWebsiteId();
 
-        foreach ($websites as $websiteId => $affected) {
-            if ($websiteId == 0) {
-                continue;
-            }
+        $values = array(
+            'product_id' => '_entity_id',
+            'stock_id' => new Expr(1),
+            'qty' => new Expr(0),
+            'is_in_stock' => new Expr(0),
+            'low_stock_date' => new Expr('NULL'),
+            'stock_status_changed_auto' => new Expr(0),
+            'website_id' => new Expr($websiteId),
+        );
 
-            $values = array(
-                'product_id' => '_entity_id',
-                'stock_id' => new Expr(1),
-                'qty' => new Expr(0),
-                'is_in_stock' => new Expr(0),
-                'low_stock_date' => new Expr('NULL'),
-                'stock_status_changed_auto' => new Expr(0),
-                'website_id' => new Expr($websiteId),
-            );
+        $select = $connection->select()->from($tmpTable, $values);
 
-            $select = $connection->select()->from($tmpTable, $values)->where('_type_id = ?', 'simple');
-
-            $connection->query(
-                $connection->insertFromSelect(
-                    $select,
-                    $connection->getTableName('cataloginventory_stock_item'),
-                    array_keys($values),
-                    2
-                )
-            );
-
-        }
+        $connection->query(
+            $connection->insertFromSelect(
+                $select,
+                $connection->getTableName('cataloginventory_stock_item'),
+                array_keys($values),
+                2
+            )
+        );
     }
 
     /**
@@ -752,4 +827,101 @@ class Import extends Factory
         );
     }
 
+    /**
+     * Set related, up-sell and cross-sell
+     *
+     * @return void
+     */
+    public function setRelated()
+    {
+        $connection = $this->_entities->getResource()->getConnection();
+        $tmpTable = $this->_entities->getTableName($this->getCode());
+
+        $related = array();
+
+        // Product relations
+        if ($connection->tableColumnExists($tmpTable, 'RELATED-products')) {
+            $related[] = array(
+                'type_id' => Link::LINK_TYPE_RELATED,
+                'column'  => 'RELATED-products',
+            );
+        }
+        if ($connection->tableColumnExists($tmpTable, 'UPSELL-products')) {
+            $related[] = array(
+                'type_id' => Link::LINK_TYPE_UPSELL,
+                'column'  => 'UPSELL-products',
+            );
+        }
+        if ($connection->tableColumnExists($tmpTable, 'X_SELL-products')) {
+            $related[] = array(
+                'type_id' => Link::LINK_TYPE_CROSSSELL,
+                'column'  => 'X_SELL-products',
+            );
+        }
+        if ($connection->tableColumnExists($tmpTable, 'CROSSSELL-products')) {
+            $related[] = array(
+                'type_id' => Link::LINK_TYPE_CROSSSELL,
+                'column'  => 'CROSSSELL-products',
+            );
+        }
+
+        // Product group relations
+        if ($connection->tableColumnExists($tmpTable, 'RELATED-groups')) {
+            $related[] = array(
+                'type_id' => Link::LINK_TYPE_RELATED,
+                'column'  => 'RELATED-groups',
+            );
+        }
+        if ($connection->tableColumnExists($tmpTable, 'UPSELL-groups')) {
+            $related[] = array(
+                'type_id' => Link::LINK_TYPE_UPSELL,
+                'column'  => 'UPSELL-groups',
+            );
+        }
+        if ($connection->tableColumnExists($tmpTable, 'X_SELL-groups')) {
+            $related[] = array(
+                'type_id' => Link::LINK_TYPE_CROSSSELL,
+                'column'  => 'X_SELL-groups',
+            );
+        }
+        if ($connection->tableColumnExists($tmpTable, 'CROSSSELL-groups')) {
+            $related[] = array(
+                'type_id' => Link::LINK_TYPE_CROSSSELL,
+                'column'  => 'CROSSSELL-groups',
+            );
+        }
+        foreach ($related as $type) {
+            $select = $connection->select()
+                ->from(
+                    array(
+                        'c' => $connection->getTableName('pimgento_entities')
+                    ),
+                    array()
+                )
+                ->joinInner(
+                    array('p' => $tmpTable),
+                    'FIND_IN_SET(`c`.`code`, `p`.`' . $type['column'] . '`)
+                        AND `c`.`import` = "product"',
+                    array(
+                        'product_id'        => 'p._entity_id',
+                        'linked_product_id' => 'c.entity_id',
+                        'link_type_id'      => new Expr($type['type_id'])
+                    )
+                )
+                ->joinInner(
+                    array('e' => $connection->getTableName('catalog_product_entity')),
+                    'c.entity_id = e.entity_id',
+                    array()
+                );
+
+            $connection->query(
+                $connection->insertFromSelect(
+                    $select,
+                    $connection->getTableName('catalog_product_link'),
+                    array('product_id', 'linked_product_id', 'link_type_id'),
+                    AdapterInterface::INSERT_ON_DUPLICATE
+                )
+            );
+        }
+    }
 }

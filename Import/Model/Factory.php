@@ -108,6 +108,10 @@ class Factory extends DataObject implements FactoryInterface
             }
         }
 
+        if ($this->getFileIsRequired() && !$this->getFile()) {
+            $canExecute = false;
+        }
+
         return $canExecute;
     }
 
@@ -406,6 +410,27 @@ class Factory extends DataObject implements FactoryInterface
     }
 
     /**
+     * Retrieve file is Required
+     *
+     * @return bool
+     */
+    public function getFileIsRequired()
+    {
+        return $this->getData(self::FILE_IS_REQUIRED);
+    }
+
+    /**
+     * Set file is required
+     *
+     * @param bool $isRequired
+     * @return $this
+     */
+    public function setFileIsRequired($isRequired)
+    {
+        return $this->setData(self::FILE_IS_REQUIRED, $isRequired);
+    }
+
+    /**
      * Retrieve current comment
      *
      * @return string
@@ -502,4 +527,35 @@ class Factory extends DataObject implements FactoryInterface
         return $this->_moduleManager->isEnabled($module);
     }
 
+    /**
+     * Check if file is external
+     *
+     * @return bool
+     */
+    protected function isExternalFile()
+    {
+        return substr($this->getFile(), 0, 1) == '/';
+    }
+
+    /**
+     * Return file full path handling potential external files
+     *
+     * @return string
+     */
+    protected function getFileFullPath()
+    {
+        return $this->isExternalFile() ? $this->getFile() : $this->getUploadDir() . '/' . $this->getFile();
+    }
+
+    /**
+     * Return file not found error message handling potential external files
+     *
+     * @return string
+     */
+    protected function getFileNotFoundErrorMessage()
+    {
+        return $this->isExternalFile() ?
+            __('File %1 not found', $this->getFile()) :
+            __('File %1 not found in %2', $this->getFile(), $this->getUploadDir());
+    }
 }
